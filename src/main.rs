@@ -1,3 +1,11 @@
-fn main() {
-    println!("Hello, world!");
+use rust_stakevault::startup::run;
+use rust_stakevault::configuration::get_configuration;
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let configuration = get_configuration().expect("Failed to read application configuration");
+    let address:&str = &format!("127.0.0.1:{}", configuration.application_port);
+    let listener = std::net::TcpListener::bind(address)?;
+
+    run(listener)?.await
 }
