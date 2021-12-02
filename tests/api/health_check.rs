@@ -1,5 +1,5 @@
 
-pub mod utils;
+use crate::utils;
 
 #[actix_rt::test]
 async fn health_check_works() {

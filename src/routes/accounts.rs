@@ -38,7 +38,7 @@ pub async fn create_account(
 }
 
 #[tracing::instrument(
-    name = "Saving new subscriber details",
+    name = "Saving new account details",
     skip(data, connection_pool),
 )]    
 pub async fn insert_account(

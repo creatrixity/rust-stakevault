@@ -1,5 +1,20 @@
 {
   "db": "PostgreSQL",
+  "58bc05fe58dbbb39fb592e020fdbd0ef02875d71544dbf002a52fd064697a83e": {
+    "query": "\n        INSERT INTO subscriptions (id, email, name, created_at)\n        VALUES ($1, $2, $3, $4)\n        ",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Left": [
+          "Uuid",
+          "Text",
+          "Text",
+          "Timestamptz"
+        ]
+      },
+      "nullable": []
+    }
+  },
   "f63b6a31627436ceb220cec095a07b133373a7250798f1030bd436e12275d59d": {
     "query": "\n        INSERT INTO accounts (id, email, username, password, created_at)\n        VALUES ($1, $2, $3, $4, $5)\n        ",
     "describe": {
