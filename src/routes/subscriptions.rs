@@ -1,7 +1,9 @@
 use actix_web::{HttpResponse, web::{self}};
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use sqlx::PgPool;
-use crate::email_client::{self, EmailClient};
-use std::convert::{ TryFrom, TryInto };
+use crate::email_client::{EmailClient};
+use std::{convert::{ TryFrom, TryInto }};
 use crate::domain::{ NewSubscriber, SubscriberName, SubscriberEmail };
 use crate::configuration::ApplicationBaseUrl;
 
@@ -30,6 +32,15 @@ impl TryFrom<FormData> for NewSubscriber {
     }    
 }
 
+fn generate_subscription_token() -> String {
+    let mut rng = thread_rng();
+
+    std::iter::repeat_with(|| rng.sample(Alphanumeric))
+        .map(char::from)
+        .take(25)
+        .collect()
+}
+
 
 #[tracing::instrument(
     name = "Adding a new subscriber",
@@ -49,36 +60,67 @@ pub async fn subscribe(
         Ok(data) => data,
         Err(_) => return HttpResponse::BadRequest().finish()
     };
-    match insert_subscriber(&new_subscriber, &connection_pool).await
+   let subscriber_id = match insert_subscriber(&new_subscriber, &connection_pool).await
     {
-        Ok(_) => {
-            if send_confirmation_email(&email_client, new_subscriber, &base_url.0).await.is_err() {
-                return HttpResponse::InternalServerError().json(SubscriberCreationResponse {
-                    message: "Failed to send email {:#}".to_string()
-                })
-            }
-
-            HttpResponse::Ok().json(
-                SubscriberCreationResponse {
-                message: "New subscriber successfully created".into()
-            })
-        },
-        Err(e) => HttpResponse::InternalServerError().json(SubscriberCreationResponse {
+        Ok(subscriber_id) => subscriber_id,
+        Err(e) => return HttpResponse::InternalServerError().json(SubscriberCreationResponse {
             message: format!("Failed to create subscriber {:#}", e)
         })
+    };
+
+    let subscription_token = generate_subscription_token();
+    if store_token(&connection_pool, subscriber_id, &subscription_token).await.is_err() {
+        return HttpResponse::InternalServerError().finish()
     }
+    
+    if send_confirmation_email(&email_client, new_subscriber, &base_url.0, &subscription_token).await.is_err() {
+        return HttpResponse::InternalServerError().json(SubscriberCreationResponse {
+            message: "Failed to send email {:#}".to_string()
+        })
+    }
+
+    HttpResponse::Ok().json(
+        SubscriberCreationResponse {
+        message: "New subscriber successfully created".into()
+    })
+
 }
 
 #[tracing::instrument(
-    name = "Send a confirmation email to a new ",
+    name = "Store confirmation nonce for a new subscriber",
+    skip(pool, subscription_token)
+)]
+pub async fn store_token(pool: &PgPool, subscriber_id: uuid::Uuid, subscription_token: &str) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+            INSERT INTO subscription_tokens (subscription_token, subscriber_id)
+            VALUES ($1, $2)
+        "#,
+        subscription_token,
+        subscriber_id
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to execute: {:?}", e);
+
+        e
+    })?;
+
+    Ok(())
+}
+
+#[tracing::instrument(
+    name = "Send a confirmation email to a new subscriber",
     skip(email_client, new_subscriber),
 )]
 pub async fn send_confirmation_email (
     email_client: &EmailClient,
     new_subscriber: NewSubscriber,
-    base_url: &str
+    base_url: &str,
+    token: &str
 ) -> Result<(), reqwest::Error> {
-    let confirmation_link = format!("{}/subscriptions/confirm?subscription_token=mytoken", base_url);
+    let confirmation_link = format!("{}/subscriptions/confirm?subscription_token={}", base_url, token);
 
     email_client.send_email(
         new_subscriber.email,
@@ -99,13 +141,14 @@ pub async fn send_confirmation_email (
 pub async fn insert_subscriber(
     data: &NewSubscriber,
     connection_pool: &PgPool,    
-) -> Result<(), sqlx::Error> {
+) -> Result<uuid::Uuid, sqlx::Error> {
+    let id = uuid::Uuid::new_v4();
     sqlx::query!(
         r#"
         INSERT INTO subscriptions (id, email, name, created_at, status)
         VALUES ($1, $2, $3, $4, $5)
         "#,
-        uuid::Uuid::new_v4(),
+        id,
         data.email.as_ref(),
         data.name.as_ref(),
         chrono::Utc::now(),
@@ -117,6 +160,6 @@ pub async fn insert_subscriber(
         e
     })?;
 
-    Ok(())
+    Ok(id)
 }
 
